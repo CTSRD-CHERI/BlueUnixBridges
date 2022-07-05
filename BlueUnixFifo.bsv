@@ -30,9 +30,9 @@
 
 package BlueUnixFifo;
 
-import Vector :: *;
 import FIFOF :: *;
 import SourceSink :: *;
+import Printf :: *;
 
 // C imports
 ////////////////////////////////////////////////////////////////////////////////
@@ -46,15 +46,29 @@ import "BDPI" bub_fifo_BDPI_Write =
   function ActionValue #(Bool) produceFF ( BlueUnixFifoHandle handle
                                          , Bit #(n) data );
 
+// local helpers
+////////////////////////////////////////////////////////////////////////////////
+
+function Bit #(m) truncateOrZeroExtend (Bit #(n) x);
+  Bit #(m) y = 0;
+  for (Integer i = 0; i < valueOf (TMin #(m, n)); i = i + 1) y[i] = x[i];
+  return y;
+endfunction
+
 ////////////////////////////////////////////////////////////////////////////////
 module mkUnixFifoSource #(String pathname) (Source #(t))
   // constraints
   provisos ( Bits #(t, t_bits_sz)
            , Add #(1, _dummy0, t_bits_sz) // t_bits_sz > 0
            , NumAlias #(t_bytes_sz, TDiv #(t_bits_sz, 8))
-           , NumAlias #(t_log2_bytes_sz, TLog #(t_bytes_sz))
-           , Add #(_dummy1, t_log2_bytes_sz, 32)
-           , Add #(_dummy2, t_bits_sz, TMul #(TDiv #(t_bits_sz, 8), 8)) );
+           , NumAlias #(t_log2_bytes_sz, TLog #(t_bytes_sz)) );
+           //, Add #(_dummy1, t_log2_bytes_sz, 32)
+           //, Add #(_dummy2, t_bits_sz, TMul #(TDiv #(t_bits_sz, 8), 8)) );
+
+  // static assertion to replace commented out provisos
+  if (valueOf (t_log2_bytes_sz) > 32)
+    error (sprintf ( "t_log2_bytes_sz: %0d should be less than 32"
+                   , valueOf (t_log2_bytes_sz) ));
 
   // prepare unix fifo descriptor
   Reg #(Maybe #(BlueUnixFifoHandle)) blueUnixFifoHandle <- mkReg (Invalid);
@@ -78,7 +92,7 @@ module mkUnixFifoSource #(String pathname) (Source #(t))
     Bit #(TMul #(t_bytes_sz, 8)) data = truncateLSB (raw);
     // if we received something
     if (receivedBytes == fromInteger (valueOf (t_bytes_sz))) begin
-      ff.enq (unpack (truncate (data)));
+      ff.enq (unpack (truncateOrZeroExtend (data)));
     end
     // nothing was received, keep trying
     else if (receivedBytes == 0) noAction;
@@ -102,10 +116,14 @@ module mkUnixFifoSink #(String pathname) (Sink #(t))
   provisos ( Bits #(t, t_bits_sz)
            , Add #(1, _dummy0, t_bits_sz) // t_bits_sz > 0
            , NumAlias #(t_bytes_sz, TDiv #(t_bits_sz, 8))
-           , NumAlias #(t_log2_bytes_sz, TLog #(t_bytes_sz))
-           , Add #(_dummy1, t_log2_bytes_sz, 32)
-           , Add #(_dummy2, t_bits_sz, TMul #(TDiv #(t_bits_sz, 8), 8)) );
+           , NumAlias #(t_log2_bytes_sz, TLog #(t_bytes_sz)) );
+           //, Add #(_dummy1, t_log2_bytes_sz, 32)
+           //, Add #(_dummy2, t_bits_sz, TMul #(TDiv #(t_bits_sz, 8), 8)) );
 
+  // static assertion to replace commented out provisos
+  if (valueOf (t_log2_bytes_sz) > 32)
+    error (sprintf ( "t_log2_bytes_sz: %0d should be less than 32"
+                   , valueOf (t_log2_bytes_sz) ));
 
   // prepare unix fifo descriptor
   Reg #(Maybe #(BlueUnixFifoHandle)) blueUnixFifoHandle <- mkReg (Invalid);
@@ -120,7 +138,7 @@ module mkUnixFifoSink #(String pathname) (Sink #(t))
   FIFOF #(t) ff <- mkUGFIFOF;
 
   rule sendBytes (isValid (blueUnixFifoHandle) && ff.notEmpty);
-    Bit #(TMul #(t_bytes_sz, 8)) data = zeroExtend (pack (ff.first));
+    Bit #(TMul #(t_bytes_sz, 8)) data = truncateOrZeroExtend (pack (ff.first));
     Bool sent <- produceFF (blueUnixFifoHandle.Valid, data);
     if (sent) ff.deq;
   endrule
