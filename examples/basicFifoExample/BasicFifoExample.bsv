@@ -47,8 +47,8 @@ module testUnixFifo (Empty)
   provisos ( Alias #(t_req, MyReqType #(Bit #(12), Bit #(11)))
            , Alias #(t_rsp, MyRspType #(Bit #(22), Bit #(132))) );
 
-  Sink #(t_req) reqSnk <- mkUnixFifoSink ("reqSource");
-  Source #(t_rsp) rspSrc <- mkUnixFifoSource ("rspSink");
+  Sink #(t_req) reqSnk <- mkUnixFifoSink ("fifos/reqSource");
+  Source #(t_rsp) rspSrc <- mkUnixFifoSource ("fifos/rspSink");
 
   Reg #(Bit #(12)) reqCnt <- mkReg (5);
   rule sendReq;

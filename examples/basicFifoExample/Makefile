@@ -46,8 +46,7 @@ clean:
 	rm -f basicFifoExample
 	rm -f basicFifoExample.so
 	rm -rf $(BUILDDIR)
-	rm -f reqSource
-	rm -f rspSink
+	rm -rf fifos
 	rm -f getReq
 	rm -f getReq.o
 	rm -f putRsp

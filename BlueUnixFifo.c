@@ -32,6 +32,7 @@
 
 #include <fcntl.h>
 //#include <poll.h>
+#include <libgen.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <errno.h>
@@ -39,11 +40,37 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <dirent.h>
 
 // local helpers
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
+
+// create path
+//////////////
+int create_dir_path (const char* path, mode_t mode) {
+  int res = -1; // initialise return status to error
+  DIR* dir = opendir (path);
+  int errsv = errno;
+  if (dir) { // check if the dir path is already existing, and end recursion
+    closedir (dir);
+    res = 0; // no error encountered, success
+  } else if (ENOENT == errsv) { // otherwise, create it and its parent
+    // copy path for string manipulation
+    size_t len = strlen (path) + 1;
+    char* parentpath = (char*) malloc (len * sizeof (char));
+    char* basepath = (char*) malloc (len * sizeof (char));
+    strcpy (parentpath, path);
+    strcpy (basepath, path);
+    // try to create the parent hierarchy
+    res = create_dir_path (dirname (parentpath), mode | 0111);
+    // if it succeeded, try to create the directory itself
+    if (res == 0) res = mkdir (basename (basepath), mode | 0111);
+  }
+  // return error status
+  return res;
+}
 
 // create a blue unix fifo descriptor
 /////////////////////////////////////
@@ -136,6 +163,11 @@ void open_fifo (fifo_desc_t* desc) {
 // create a fifo on the filesystem for other processes to open
 //////////////////////////////////////////////////////////////
 void create_fifo (fifo_desc_t* desc) {
+  // create the parent dir hierarchy (copy path for string manipulation)
+  size_t len = strlen (desc->pathname) + 1;
+  char* pathcpy = (char*) malloc (len * sizeof (char));
+  strcpy (pathcpy, desc->pathname);
+  create_dir_path (dirname (pathcpy), desc->mode);
   // create the unix fifo
   if (mkfifo (desc->pathname, desc->mode) == -1) {
     int errsv = errno;
