@@ -75,7 +75,8 @@ module mkUnixFifoSource #(String pathname) (Source #(t))
   rule create (!isValid (blueUnixFifoHandle));
     let handle <- createFF (pathname, fromInteger (valueOf (t_bytes_sz)));
     blueUnixFifoHandle <= Valid (handle);
-    $display ( "created source fifo, t of size %0d bits, %0d bytes"
+    $display ( "using unix fifo \"", pathname
+             , "\", %0d-bit payload (%0d byte(s)), opened as a source"
              , valueOf (t_bits_sz), valueOf (t_bytes_sz) );
   endrule
 
@@ -130,7 +131,8 @@ module mkUnixFifoSink #(String pathname) (Sink #(t))
   rule create (!isValid (blueUnixFifoHandle));
     let handle <- createFF (pathname, fromInteger (valueOf (t_bytes_sz)));
     blueUnixFifoHandle <= Valid (handle);
-    $display ( "created sink fifo, t of size %0d bits, %0d bytes"
+    $display ( "using unix fifo ", pathname
+             , ", %0d-bit payload (%0d byte(s)), opened as a sink"
              , valueOf (t_bits_sz), valueOf (t_bytes_sz) );
   endrule
 
