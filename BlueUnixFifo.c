@@ -60,13 +60,12 @@ int create_dir_path (const char* path, mode_t mode) {
     // copy path for string manipulation
     size_t len = strlen (path) + 1;
     char* parentpath = (char*) malloc (len * sizeof (char));
-    char* basepath = (char*) malloc (len * sizeof (char));
     strcpy (parentpath, path);
-    strcpy (basepath, path);
+    parentpath = dirname (parentpath);
     // try to create the parent hierarchy
-    res = create_dir_path (dirname (parentpath), mode | 0111);
+    res = create_dir_path (parentpath, mode | 0111);
     // if it succeeded, try to create the directory itself
-    if (res == 0) res = mkdir (basename (basepath), mode | 0111);
+    if (res == 0) res = mkdir (path, mode | 0111);
   }
   // return error status
   return res;
