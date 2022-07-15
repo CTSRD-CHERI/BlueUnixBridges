@@ -6,7 +6,7 @@ typedef struct {
   uint16_t b;
 } MyReqType;
 
-void decodeReq (const uint8_t* rawbytes, void* dest) {
+void decodeReq (void* dest, const uint8_t* rawbytes) {
   // cast destination pointer to MyReqType
   MyReqType* req = (MyReqType*) dest;
   // low 11 bits: b
@@ -24,7 +24,8 @@ int main (int argc, char** argv) {
     printf ("usage: %s FIFO_PATH N_REQ (argc: %d)\n", argv[0], argc);
     exit (EXIT_FAILURE);
   }
-  fifo_desc_t* reqDesc = bub_fifo_OpenAsConsumer (argv[1], 3, &decodeReq);
+  bub_fifo_desc_t reqDesc =
+    bub_fifo_OpenForConsumption (argv[1], 3, &decodeReq);
   printf("argv[1]: %s\n", argv[1]);
   printf("argv[2]: %s\n", argv[2]);
   printf("----------------------------\n");
@@ -32,7 +33,7 @@ int main (int argc, char** argv) {
   MyReqType req;
 
   for (int i = 0; i < atoi (argv[2]); i ++) {
-    while (!bub_fifo_Consume (reqDesc, (void *) &req));
+    bub_fifo_ConsumeElement (reqDesc, (void *) &req);
     printReq (&req);
   }
   bub_fifo_Close (reqDesc);

@@ -31,7 +31,6 @@
 #include "BlueUnixFifo.h"
 
 #include <fcntl.h>
-//#include <poll.h>
 #include <libgen.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -47,9 +46,22 @@
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
+// A BlueUnixFifo structure
+typedef struct {
+  char* pathname;
+  int fd;
+  mode_t mode;
+  int flags;
+  size_t element_byte_size;
+  uint8_t* buf;
+  ssize_t byte_count;
+  deserializer_t deserializer;
+  serializer_t serializer;
+} bub_fifo_fields_t;
+
 // create path
 //////////////
-int create_dir_path (const char* path, mode_t mode) {
+static int create_dir_path (const char* path, mode_t mode) {
   int res = -1; // initialise return status to error
   DIR* dir = opendir (path);
   int errsv = errno;
@@ -73,13 +85,14 @@ int create_dir_path (const char* path, mode_t mode) {
 
 // create a blue unix fifo descriptor
 /////////////////////////////////////
-fifo_desc_t* create_fifo_desc ( char* pathname
-                              , mode_t mode
-                              , int flags
-                              , size_t element_byte_size
-                              , encoder_t encoder
-                              , decoder_t decoder ) {
-  fifo_desc_t* desc = (fifo_desc_t*) malloc (sizeof (fifo_desc_t));
+static bub_fifo_fields_t* create_fifo_desc ( char* pathname
+                                           , mode_t mode
+                                           , int flags
+                                           , size_t element_byte_size
+                                           , deserializer_t deserializer
+                                           , serializer_t serializer ) {
+  bub_fifo_fields_t* desc =
+    (bub_fifo_fields_t*) malloc (sizeof (bub_fifo_fields_t));
   // copy pathname
   size_t n = strlen (pathname);
   desc->pathname = (char*) malloc (n + 1);
@@ -98,19 +111,19 @@ fifo_desc_t* create_fifo_desc ( char* pathname
   // running byte count to account for currently read/written bytes, initially
   // set to 0
   desc->byte_count = 0;
-  // an encoder callback, called by blueUnixFifo_Produce to transform the rich
-  // typed value being sent into a byte array
-  desc->encoder = encoder;
-  // an decoder callback, called by blueUnixFifo_Consume to transform the byte
-  // array being received into a rich typed value
-  desc->decoder = decoder;
+  // a deserializer callback, called by blueUnixFifo_Consume to transform the
+  // byte array being received into a rich typed value
+  desc->deserializer = deserializer;
+  // a serializer callback, called by blueUnixFifo_Produce to transform the
+  // rich typed value being sent into a byte array
+  desc->serializer = serializer;
   // return the initialized blue unix fifo descriptor
   return desc;
 }
 
 // destroy a blue unix fifo descriptor (free dynamically allocated memory)
 //////////////////////////////////////////////////////////////////////////
-void destroy_fifo_desc (fifo_desc_t* desc) {
+static void destroy_fifo_desc (bub_fifo_fields_t* desc) {
   free (desc->pathname);
   free (desc->buf);
   free (desc);
@@ -118,8 +131,8 @@ void destroy_fifo_desc (fifo_desc_t* desc) {
 
 // print a blue unix fifo descriptor (debug)
 ////////////////////////////////////////////
-void print_fifo_desc (fifo_desc_t* desc) {
-  printf ( "fifo_desc_t @ %p:\n"
+static void print_fifo_desc (bub_fifo_fields_t* desc) {
+  printf ( "bub_fifo_fields_t @ %p:\n"
            ".pathname: %s\n"
            ".fd: %d\n"
            ".mode: 0%o\n"
@@ -127,8 +140,8 @@ void print_fifo_desc (fifo_desc_t* desc) {
            ".element_byte_size: %lu\n"
            ".buf: %p\n"
            ".byte_count: %ld\n"
-           ".encoder@: %p\n"
-           ".decoder@: %p\n"
+           ".deserializer@: %p\n"
+           ".serializer@: %p\n"
          , desc
          , desc->pathname
          , desc->fd
@@ -137,13 +150,13 @@ void print_fifo_desc (fifo_desc_t* desc) {
          , desc->element_byte_size
          , desc->buf
          , desc->byte_count
-         , desc->encoder
-         , desc->decoder );
+         , desc->deserializer
+         , desc->serializer );
 }
 
 // open file descriptor associated with a blue unix fifo descriptor
 ///////////////////////////////////////////////////////////////////
-void open_fifo (fifo_desc_t* desc) {
+static void open_fifo (bub_fifo_fields_t* desc) {
   int fd = open (desc->pathname, desc->flags);
   if (fd == -1) {
     int errsv = errno;
@@ -161,7 +174,7 @@ void open_fifo (fifo_desc_t* desc) {
 
 // create a fifo on the filesystem for other processes to open
 //////////////////////////////////////////////////////////////
-void create_fifo (fifo_desc_t* desc) {
+static void create_fifo (bub_fifo_fields_t* desc) {
   // create the parent dir hierarchy (copy path for string manipulation)
   size_t len = strlen (desc->pathname) + 1;
   char* pathcpy = (char*) malloc (len * sizeof (char));
@@ -187,7 +200,7 @@ void create_fifo (fifo_desc_t* desc) {
 
 // close an opened blue unix fifo file descriptor
 /////////////////////////////////////////////////
-void close_fifo (fifo_desc_t* desc) {
+static void close_fifo (bub_fifo_fields_t* desc) {
   if (close (desc->fd) == -1) {
     int errsv = errno;
     switch (errsv) {
@@ -200,9 +213,9 @@ void close_fifo (fifo_desc_t* desc) {
   }
 }
 
-// TODO
-///////
-void unlink_fifo (fifo_desc_t* desc) {
+// unlink the backing file for a blue unix fifo descriptor
+//////////////////////////////////////////////////////////
+static void unlink_fifo (bub_fifo_fields_t* desc) {
   if (unlink (desc->pathname) == -1) {
     int errsv = errno;
     switch (errsv) {
@@ -215,9 +228,9 @@ void unlink_fifo (fifo_desc_t* desc) {
   }
 }
 
-// TODO
-///////
-void destroy_fifo (fifo_desc_t* desc) {
+// desctroy the blue unix fifo described by `desc`
+//////////////////////////////////////////////////
+static void destroy_fifo (bub_fifo_fields_t* desc) {
   close_fifo (desc);
   unlink_fifo (desc);
   destroy_fifo_desc (desc);
@@ -225,7 +238,7 @@ void destroy_fifo (fifo_desc_t* desc) {
 
 // read bytes from the fifo and aggregate them in the descriptor buffer
 ///////////////////////////////////////////////////////////////////////
-void read_fifo (fifo_desc_t* desc) {
+static void read_fifo (bub_fifo_fields_t* desc) {
   // check for presence of producer
   if (desc->fd == -1) open_fifo (desc);
   if (desc->fd == -1) return; // immediate return if no producer is present
@@ -250,7 +263,7 @@ void read_fifo (fifo_desc_t* desc) {
 
 // write bytes into the fifo and keep track of how many in the descriptor
 /////////////////////////////////////////////////////////////////////////
-void write_fifo (fifo_desc_t* desc, const uint8_t* data) {
+static void write_fifo (bub_fifo_fields_t* desc, const uint8_t* data) {
   // check for presence of consumer
   if (desc->fd == -1) open_fifo (desc);
   if (desc->fd == -1) return;
@@ -281,40 +294,42 @@ void write_fifo (fifo_desc_t* desc, const uint8_t* data) {
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
-fifo_desc_t* bub_fifo_BDPI_Create (char* pathname, size_t bytesize) {
+bub_fifo_desc_t bub_fifo_BDPI_Create (char* pathname, size_t bytesize) {
   // initialise a fifo descriptor
-  fifo_desc_t* desc = create_fifo_desc ( pathname
-                                       , 0666
-                                       , O_RDWR | O_NONBLOCK
-                                       , bytesize
-                                       , NULL
-                                       , NULL );
+  bub_fifo_fields_t* desc = create_fifo_desc ( pathname
+                                             , 0666
+                                             , O_RDWR | O_NONBLOCK
+                                             , bytesize
+                                             , NULL
+                                             , NULL );
   // create the fifo
   create_fifo (desc);
   // return the fifo descriptor
-  return desc;
+  return (bub_fifo_desc_t) desc;
 }
 
-void bub_fifo_BDPI_Read (unsigned int* retbufptr, fifo_desc_t* desc) {
-  read_fifo (desc);
+void bub_fifo_BDPI_Read (unsigned int* retbufptr, bub_fifo_desc_t desc) {
+  bub_fifo_fields_t* fields = (bub_fifo_fields_t*) desc;
+  read_fifo (fields);
   // byte handle on the return buffer
   uint8_t* retbuf = (uint8_t*) retbufptr;
   // return no bytes read by default
   memset (retbuf, 0, 4);
   // if full data has been read, copy internal buf into retbuf with read size,
   // and reset byte count
-  if (desc->byte_count == desc->element_byte_size) {
-    desc->byte_count = 0;
-    (*retbuf) = (uint32_t) desc->element_byte_size;
-    memcpy (retbuf + 4, desc->buf, desc->element_byte_size);
+  if (fields->byte_count == fields->element_byte_size) {
+    fields->byte_count = 0;
+    (*retbuf) = (uint32_t) fields->element_byte_size;
+    memcpy (retbuf + 4, fields->buf, fields->element_byte_size);
   }
 }
 
-unsigned char bub_fifo_BDPI_Write (fifo_desc_t* desc, unsigned int* data) {
-  write_fifo (desc, (const uint8_t*) data);
+unsigned char bub_fifo_BDPI_Write (bub_fifo_desc_t desc, unsigned int* data) {
+  bub_fifo_fields_t* fields = (bub_fifo_fields_t*) desc;
+  write_fifo (fields, (const uint8_t*) data);
   // if full data has been written, reset byte count and return success
-  if (desc->byte_count == desc->element_byte_size) {
-    desc->byte_count = 0;
+  if (fields->byte_count == fields->element_byte_size) {
+    fields->byte_count = 0;
     return 1;
   }
   return 0;
@@ -325,77 +340,90 @@ unsigned char bub_fifo_BDPI_Write (fifo_desc_t* desc, unsigned int* data) {
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
-fifo_desc_t* bub_fifo_OpenAsProducer ( char* pathname
-                                     , size_t bytesize
-                                     , encoder_t encoder ) {
+bub_fifo_desc_t bub_fifo_OpenForProduction ( char* pathname
+                                           , size_t bytesize
+                                           , serializer_t serializer ) {
   // initialise a fifo descriptor
-  fifo_desc_t* desc = create_fifo_desc ( pathname
-                                       , 0000
-                                       , O_WRONLY | O_NONBLOCK
-                                       , bytesize
-                                       , encoder
-                                       , NULL );
+  bub_fifo_fields_t* desc = create_fifo_desc ( pathname
+                                            , 0000
+                                            , O_WRONLY | O_NONBLOCK
+                                            , bytesize
+                                            , NULL
+                                            , serializer );
   // open the unix fifo
   open_fifo (desc);
   // return the descriptor
-  return desc;
+  return (bub_fifo_desc_t) desc;
 }
 
-fifo_desc_t* bub_fifo_OpenAsConsumer ( char* pathname
-                                     , size_t bytesize
-                                     , decoder_t decoder ) {
+bub_fifo_desc_t bub_fifo_OpenForConsumption ( char* pathname
+                                            , size_t bytesize
+                                            , deserializer_t deserializer ) {
   // initialise a fifo descriptor
-  fifo_desc_t* desc = create_fifo_desc ( pathname
-                                       , 0000
-                                       , O_RDONLY | O_NONBLOCK
-                                       , bytesize
-                                       , NULL
-                                       , decoder );
+  bub_fifo_fields_t* desc = create_fifo_desc ( pathname
+                                             , 0000
+                                             , O_RDONLY | O_NONBLOCK
+                                             , bytesize
+                                             , deserializer
+                                             , NULL );
   // open the unix fifo
   open_fifo (desc);
   // return the descriptor
-  return desc;
+  return (bub_fifo_desc_t) desc;
 }
 
-fifo_desc_t* bub_fifo_OpenAsProducerConsumer ( char* pathname
-                                             , size_t bytesize
-                                             , encoder_t encoder
-                                             , decoder_t decoder ) {
+bub_fifo_desc_t bub_fifo_OpenForConsumptionProduction
+  ( char* pathname, size_t bytesize
+  , deserializer_t deserializer, serializer_t serializer ) {
   // initialise a fifo descriptor
-  fifo_desc_t* desc = create_fifo_desc ( pathname
-                                       , 0000
-                                       , O_RDWR | O_NONBLOCK
-                                       , bytesize
-                                       , encoder
-                                       , decoder );
+  bub_fifo_fields_t* desc = create_fifo_desc ( pathname
+                                             , 0000
+                                             , O_RDWR | O_NONBLOCK
+                                             , bytesize
+                                             , deserializer
+                                             , serializer );
   // open the unix fifo
   open_fifo (desc);
   // return the descriptor
-  return desc;
+  return (bub_fifo_desc_t) desc;
 }
 
-bool bub_fifo_Consume (fifo_desc_t* desc, void* elemdest) {
-  read_fifo (desc);
-  if (desc->byte_count == desc->element_byte_size) {
-    desc->byte_count = 0;
-    desc->decoder (desc->buf, elemdest);
-    return true;
+ssize_t bub_fifo_Consume (bub_fifo_desc_t desc, void* elemdest) {
+  bub_fifo_fields_t* fields = (bub_fifo_fields_t*) desc;
+  read_fifo (fields);
+  if (fields->byte_count == fields->element_byte_size) {
+    fields->byte_count = 0;
+    fields->deserializer (elemdest, fields->buf);
+    return fields->element_byte_size;
   }
-  return false;
+  return fields->byte_count;
 }
 
-bool bub_fifo_Produce (fifo_desc_t* desc, void* elemsrc) {
+void* bub_fifo_ConsumeElement (bub_fifo_desc_t desc, void* elemdest) {
+  bub_fifo_fields_t* fields = (bub_fifo_fields_t*) desc;
+  while (bub_fifo_Consume (desc, elemdest) != fields->element_byte_size);
+  return elemdest;
+}
+
+ssize_t bub_fifo_Produce (bub_fifo_desc_t desc, void* elemsrc) {
+  bub_fifo_fields_t* fields = (bub_fifo_fields_t*) desc;
   // encode on first attempt
-  if (desc->byte_count == 0) desc->encoder (elemsrc, desc->buf);
-  write_fifo (desc, desc->buf);
+  if (fields->byte_count == 0) fields->serializer (fields->buf, elemsrc);
+  write_fifo (fields, fields->buf);
   // if full data has been written, reset byte count and return success
-  if (desc->byte_count == desc->element_byte_size) {
-    desc->byte_count = 0;
-    return true;
+  if (fields->byte_count == fields->element_byte_size) {
+    fields->byte_count = 0;
+    return fields->element_byte_size;
   }
-  return false;
+  return fields->byte_count;
 }
 
-void bub_fifo_Close (fifo_desc_t* desc) {
-  close_fifo (desc);
+void* bub_fifo_ProduceElement (bub_fifo_desc_t desc, void* elemsrc) {
+  bub_fifo_fields_t* fields = (bub_fifo_fields_t*) desc;
+  while (bub_fifo_Produce (desc, elemsrc) != fields->element_byte_size);
+  return elemsrc;
+}
+
+void bub_fifo_Close (bub_fifo_desc_t desc) {
+  close_fifo ((bub_fifo_fields_t*) desc);
 }

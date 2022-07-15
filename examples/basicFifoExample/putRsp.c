@@ -11,7 +11,7 @@ typedef struct {
   uint8_t y[17];
 } MyRspType;
 
-void encodeRsp (const void* src, uint8_t* rawbytes) {
+void encodeRsp (uint8_t* rawbytes, const void* src) {
   MyRspType* rsp = (MyRspType*) src;
   memcpy (rawbytes, rsp->y, 17);
   rawbytes[16] = ((uint8_t) (rsp->x << 4) & 0xf0) | rawbytes[16] & 0x0f;
@@ -31,14 +31,15 @@ int main (int argc, char** argv) {
     printf ("usage: %s FIFO_PATH N_RSP (argc: %d)\n", argv[0], argc);
     exit (EXIT_FAILURE);
   }
-  fifo_desc_t* rspDesc = bub_fifo_OpenAsProducer (argv[1], 20, &encodeRsp);
+  bub_fifo_desc_t rspDesc =
+    bub_fifo_OpenForProduction (argv[1], 20, &encodeRsp);
   printf("argv[1]: %s\n", argv[1]);
   printf("argv[2]: %s\n", argv[2]);
   printf("----------------------------\n");
 
   for (int i = 0; i < atoi (argv[2]); i ++) {
     MyRspType rsp = { .x = i, .y = i*23 };
-    while (!bub_fifo_Produce (rspDesc, (void *) &rsp));
+    bub_fifo_ProduceElement (rspDesc, (void *) &rsp);
     printRsp (&rsp);
   }
   bub_fifo_Close (rspDesc);
