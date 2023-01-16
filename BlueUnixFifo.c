@@ -47,7 +47,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 // A BlueUnixFifo structure
-typedef struct {
+typedef struct bub_fifo_fields_opaque {
   char* pathname;
   int fd;
   mode_t mode;

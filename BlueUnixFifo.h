@@ -51,7 +51,7 @@ typedef void (*deserializer_t) ( void* structured_dest
 typedef void (*serializer_t) ( uint8_t* serialized_rawbytes_dest
                              , const void* structured_src );
 // A (opaque) BlueUnixFifo descriptor
-typedef struct bub_fifo_fields_t* bub_fifo_desc_t;
+typedef struct bub_fifo_fields_opaque* bub_fifo_desc_t;
 
 // BlueUnixBridges fifo API
 ////////////////////////////////////////////////////////////////////////////////
