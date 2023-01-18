@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2022 Alexandre Joannou
+ * Copyright (c) 2022-2023 Alexandre Joannou
  * All rights reserved.
  *
  * This material is based upon work supported by the DoD Information Analysis
@@ -238,7 +238,7 @@ static void destroy_fifo (bub_fifo_fields_t* desc) {
 
 // read bytes from the fifo and aggregate them in the descriptor buffer
 ///////////////////////////////////////////////////////////////////////
-static void read_fifo (bub_fifo_fields_t* desc) {
+static void fifo_read (bub_fifo_fields_t* desc) {
   // check for presence of producer
   if (desc->fd == -1) open_fifo (desc);
   if (desc->fd == -1) return; // immediate return if no producer is present
@@ -261,9 +261,43 @@ static void read_fifo (bub_fifo_fields_t* desc) {
   desc->byte_count += res;
 }
 
+// read a single byte from the fifo
+//////////////////////////////////////////////////////
+static byte_read_t fifo_read_byte (bub_fifo_fields_t* desc) {
+  // default return value
+  byte_read_t ret;
+  ret.status = InvalidByteRead;
+  // check for presence of producer
+  if (desc->fd == -1) open_fifo (desc);
+  if (desc->fd == -1) return ret; // immediate return if no producer is present
+  // read a single byte and accumulate in buf
+  uint8_t* dest = desc->buf + desc->byte_count;
+  ssize_t res = read (desc->fd, dest, 1);
+  // handle possible errors
+  if (res == -1) {
+    int errsv = errno;
+    switch (errsv) {
+      case EAGAIN: return ret;
+      default:
+        print_fifo_desc (desc);
+        printf ( "%s:l%d: %s: %s (errno: %d)\n"
+               , __FILE__, __LINE__, __func__, strerror (errsv), errsv);
+        exit (EXIT_FAILURE);
+    }
+  }
+  else if (res == 1) {
+    // on read success, accumulate one byte and return it (possibly as the last)
+    ret.byte = desc->buf[desc->byte_count];
+    desc->byte_count++;
+    ret.status = (desc->byte_count == desc->element_byte_size) ? LastByteRead
+                                                               : ValidByteRead;
+  }
+  return ret;
+}
+
 // write bytes into the fifo and keep track of how many in the descriptor
 /////////////////////////////////////////////////////////////////////////
-static void write_fifo (bub_fifo_fields_t* desc, const uint8_t* data) {
+static void fifo_write (bub_fifo_fields_t* desc, const uint8_t* data) {
   // check for presence of consumer
   if (desc->fd == -1) open_fifo (desc);
   if (desc->fd == -1) return;
@@ -279,6 +313,7 @@ static void write_fifo (bub_fifo_fields_t* desc, const uint8_t* data) {
       case EAGAIN:
         return;
       default:
+        printf ("data ptr: %p\n", data);
         print_fifo_desc (desc);
         printf ( "%s:l%d: %s: %s (errno: %d)\n"
                , __FILE__, __LINE__, __func__, strerror (errsv), errsv);
@@ -287,6 +322,70 @@ static void write_fifo (bub_fifo_fields_t* desc, const uint8_t* data) {
   }
   // on write success, accumulate bytes written
   desc->byte_count += res;
+}
+
+// write a single byte to the fifo
+///////////////////////////////////////////////////////////////////////////
+static byte_write_status_t fifo_write_byte ( bub_fifo_fields_t* desc
+                                           , const uint8_t data ) {
+  // check for presence of consumer
+  if (desc->fd == -1) open_fifo (desc);
+  if (desc->fd == -1) return ByteNotWritten;
+  // write a single byte
+  int res = write (desc->fd, &data, 1);
+  // handle possible errors
+  if (res == -1) {
+    int errsv = errno;
+    switch (errsv) {
+      case EBADF:
+      case EPIPE:
+      case EAGAIN:
+        return ByteNotWritten;
+      default:
+        printf ( "%s:l%d: %s: %s (errno: %d)\n"
+               , __FILE__, __LINE__, __func__, strerror (errsv), errsv);
+        exit (EXIT_FAILURE);
+    }
+  }
+  else if (res == 1) {
+    // on write success, accumulate one byte and report status
+    desc->byte_count++;
+    return (desc->byte_count == desc->element_byte_size) ? LastByteWritten
+                                                         : ByteWritten;
+  }
+  exit (EXIT_FAILURE);
+}
+
+// wrap relevant functions for Verilog DPI-C API
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+
+bub_fifo_desc_t bub_fifo_DPI_C_Create (char* pathname, size_t bytesize) {
+  // initialise a fifo descriptor
+  bub_fifo_fields_t* desc = create_fifo_desc ( pathname
+                                             , 0666
+                                             , O_RDWR | O_NONBLOCK
+                                             , (size_t) bytesize
+                                             , NULL
+                                             , NULL );
+  // create the fifo
+  create_fifo (desc);
+  // return the fifo descriptor
+  return (bub_fifo_desc_t) desc;
+}
+
+byte_read_t bub_fifo_DPI_C_ReadByte (bub_fifo_desc_t desc) {
+  return fifo_read_byte ((bub_fifo_fields_t*) desc);
+}
+
+byte_write_status_t bub_fifo_DPI_C_WriteByte ( bub_fifo_desc_t desc
+                                             , const uint8_t data ) {
+  return fifo_write_byte ((bub_fifo_fields_t*) desc, data);
+}
+
+void bub_fifo_DPI_C_ResetCount (bub_fifo_desc_t desc) {
+  ((bub_fifo_fields_t*) desc)->byte_count = 0;
 }
 
 // wrap relevant functions for Bluespec SystemVerilog BDPI API
@@ -310,7 +409,7 @@ bub_fifo_desc_t bub_fifo_BDPI_Create (char* pathname, size_t bytesize) {
 
 void bub_fifo_BDPI_Read (unsigned int* retbufptr, bub_fifo_desc_t desc) {
   bub_fifo_fields_t* fields = (bub_fifo_fields_t*) desc;
-  read_fifo (fields);
+  fifo_read (fields);
   // byte handle on the return buffer
   uint8_t* retbuf = (uint8_t*) retbufptr;
   // return no bytes read by default
@@ -326,7 +425,7 @@ void bub_fifo_BDPI_Read (unsigned int* retbufptr, bub_fifo_desc_t desc) {
 
 unsigned char bub_fifo_BDPI_Write (bub_fifo_desc_t desc, unsigned int* data) {
   bub_fifo_fields_t* fields = (bub_fifo_fields_t*) desc;
-  write_fifo (fields, (const uint8_t*) data);
+  fifo_write (fields, (const uint8_t*) data);
   // if full data has been written, reset byte count and return success
   if (fields->byte_count == fields->element_byte_size) {
     fields->byte_count = 0;
@@ -390,7 +489,7 @@ bub_fifo_desc_t bub_fifo_OpenForConsumptionProduction
 
 ssize_t bub_fifo_Consume (bub_fifo_desc_t desc, void* elemdest) {
   bub_fifo_fields_t* fields = (bub_fifo_fields_t*) desc;
-  read_fifo (fields);
+  fifo_read (fields);
   if (fields->byte_count == fields->element_byte_size) {
     fields->byte_count = 0;
     fields->deserializer (elemdest, fields->buf);
@@ -409,7 +508,7 @@ ssize_t bub_fifo_Produce (bub_fifo_desc_t desc, void* elemsrc) {
   bub_fifo_fields_t* fields = (bub_fifo_fields_t*) desc;
   // encode on first attempt
   if (fields->byte_count == 0) fields->serializer (fields->buf, elemsrc);
-  write_fifo (fields, fields->buf);
+  fifo_write (fields, fields->buf);
   // if full data has been written, reset byte count and return success
   if (fields->byte_count == fields->element_byte_size) {
     fields->byte_count = 0;

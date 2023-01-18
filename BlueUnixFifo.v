@@ -28,6 +28,8 @@
  * @BERI_LICENSE_HEADER_END@
  */
 
-import "DPI-C" function chandle bub_fifo_BDPI_Create (string pathname, longint unsigned bytesize);
-import "DPI-C" function void bub_fifo_BDPI_Read (chandle retbuf, chandle desc);
-import "DPI-C" function byte bub_fifo_BDPI_Write (chandle desc, chandle d);
+import "DPI-C" function chandle bub_fifo_DPI_C_Create ( string pathname
+                                                      , longint bytesize );
+import "DPI-C" function longint bub_fifo_DPI_C_ReadByte (chandle desc);
+import "DPI-C" function byte bub_fifo_DPI_C_WriteByte (chandle desc, byte data);
+import "DPI-C" function void bub_fifo_DPI_C_ResetCount (chandle desc);

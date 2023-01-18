@@ -2,7 +2,7 @@
 #define BLUE_UNIX_FIFO_H
 
 /*-
- * Copyright (c) 2022 Alexandre Joannou
+ * Copyright (c) 2022-2023 Alexandre Joannou
  * All rights reserved.
  *
  * This material is based upon work supported by the DoD Information Analysis
@@ -107,11 +107,13 @@ extern void* bub_fifo_ProduceElement (bub_fifo_desc_t desc, void* elemsrc);
 // close a blue fifo descriptor
 extern void bub_fifo_Close (bub_fifo_desc_t desc);
 
-// BDPI Bluespec SystemVerilog API
-////////////////////////////////////////////////////////////////////////////////
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+// BDPI Bluespec SystemVerilog API
+////////////////////////////////////////////////////////////////////////////////
+
 // Create a unix fifo on the filesystem at `pathname` and for data of size
 // `bytesize` bytes, and open it RW. Return a unix fifo descriptor pointer to
 // be stored by the simulator for later operations.
@@ -130,6 +132,33 @@ extern void bub_fifo_BDPI_Read (unsigned int* retbuf, bub_fifo_desc_t desc);
 // success, and 0 if the write should be re-attempted.
 extern unsigned char bub_fifo_BDPI_Write
   (bub_fifo_desc_t desc, unsigned int* d);
+
+// DPI-C Verilog API
+////////////////////////////////////////////////////////////////////////////////
+
+typedef enum: uint8_t {
+     LastByteRead = 0x00
+,   ValidByteRead = 0x01
+, InvalidByteRead = 0x02
+} byte_read_status_t;
+
+typedef struct {
+  byte_read_status_t status;
+  uint8_t byte;
+} byte_read_t;
+
+typedef enum: uint8_t {
+  LastByteWritten = 0x00
+,     ByteWritten = 0x01
+,  ByteNotWritten = 0x02
+} byte_write_status_t;
+
+extern bub_fifo_desc_t bub_fifo_DPI_C_Create (char* pathname, size_t bytesize);
+extern byte_read_t bub_fifo_DPI_C_ReadByte (bub_fifo_desc_t desc);
+extern byte_write_status_t bub_fifo_DPI_C_WriteByte ( bub_fifo_desc_t desc
+                                                    , const uint8_t data );
+extern void bub_fifo_DPI_C_ResetCount (bub_fifo_desc_t desc);
+
 #ifdef __cplusplus
 }
 #endif

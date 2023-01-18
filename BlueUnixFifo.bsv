@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2022 Alexandre Joannou
+ * Copyright (c) 2022-2023 Alexandre Joannou
  * All rights reserved.
  *
  * This material is based upon work supported by the DoD Information Analysis
@@ -31,12 +31,180 @@
 package BlueUnixFifo;
 
 import FIFOF :: *;
+import Vector :: *;
 import SourceSink :: *;
 import Printf :: *;
 
 // C imports
 ////////////////////////////////////////////////////////////////////////////////
 typedef Bit #(64) BlueUnixFifoHandle;
+
+typedef Bit #(8) ByteReadStatus;
+ByteReadStatus    lastByteRead = 8'h00;
+ByteReadStatus   validByteRead = 8'h01;
+ByteReadStatus invalidByteRead = 8'h02;
+
+typedef Bit #(8) ByteWriteStatus;
+ByteWriteStatus lastByteWritten = 8'h00;
+ByteWriteStatus     byteWritten = 8'h01;
+ByteWriteStatus  byteNotWritten = 8'h02;
+
+import "BDPI" bub_fifo_DPI_C_Create =
+  function ActionValue #(BlueUnixFifoHandle) createFF ( String pathname
+                                                      , Bit #(32) byte_size );
+import "BDPI" bub_fifo_DPI_C_ReadByte =
+  function ActionValue #(Tuple2 #(ByteReadStatus, Bit #(8)))
+             consumeByteFF (BlueUnixFifoHandle handle);
+import "BDPI" bub_fifo_DPI_C_WriteByte =
+  function ActionValue #(ByteWriteStatus)
+             produceByteFF (BlueUnixFifoHandle handle, Bit #(8) data);
+import "BDPI" bub_fifo_DPI_C_ResetCount =
+  function Action resetCountFF (BlueUnixFifoHandle handle);
+
+module mkFFConsumer #(Maybe #(BlueUnixFifoHandle) handle) (Source #(t))
+  provisos ( NumAlias #(nBytes, TDiv #(n, 8))
+           , NumAlias #(cntSz, TLog #(TAdd #(n, 1)))
+           , Bits #(t, n)
+           , Add #(_a, n, TMul #(nBytes, 8))
+           );
+
+  Vector #(nBytes, Reg #(Bit #(8))) val <- replicateM (mkRegU);
+  Vector #(nBytes, Reg #(Bool)) valTodo <- replicateM (mkReg (True));
+
+  function isFalse (x) = !x;
+
+  rule consume_bytes (isValid (handle) && !all(isFalse, readVReg (valTodo)));
+    Bool active = True;
+    for (Integer i = 0; i < valueOf (nBytes); i = i + 1) begin
+      if (active && valTodo[i]) begin
+        //match {.readStatus, .readByte} <- consumeByteFF (handle.Valid);
+        match {.readByte, .readStatus} <- consumeByteFF (handle.Valid);
+        case (readStatus)
+          invalidByteRead: active = False;
+          validByteRead: begin
+            val[i] <= readByte;
+            valTodo[i] <= False;
+          end
+          lastByteRead: begin
+            val[i] <= readByte;
+            valTodo[i] <= False;
+            if (i != (valueOf (nBytes) - 1)) begin
+              $display("finished draining a fifo but expecting more bytes");
+              $finish(-1);
+            end
+          end
+        endcase
+      end
+    end
+  endrule
+
+  Bool valCanPeek = isValid (handle) && all (isFalse, readVReg (valTodo));
+
+  method canPeek = valCanPeek;
+  method peek if (valCanPeek) = unpack (truncate (pack (readVReg (val))));
+  method drop if (valCanPeek) = action
+    writeVReg (valTodo, replicate (True));
+    resetCountFF (handle.Valid);
+  endaction;
+
+endmodule
+
+
+module mkFFProducer #(Maybe #(BlueUnixFifoHandle) handle) (Sink #(t))
+  provisos ( NumAlias #(nBytes, TDiv #(n, 8))
+           , NumAlias #(cntSz, TLog #(TAdd #(n, 1)))
+           , Bits #(t, n)
+           , Add #(_a, n, TMul #(nBytes, 8))
+           );
+
+  Vector #(nBytes, Reg #(Bit #(8))) val <- replicateM (mkRegU);
+  Vector #(nBytes, Reg #(Bool)) valTodo <- replicateM (mkReg (True));
+
+  function isFalse (x) = !x;
+
+  rule produce_bytes (isValid (handle) && !all(isFalse, readVReg (valTodo)));
+    Bool active = True;
+    for (Integer i = 0; i < valueOf (nBytes); i = i + 1) begin
+      if (active && valTodo[i]) begin
+        let writeStatus <- produceByteFF (handle.Valid, val[i]);
+        case (writeStatus)
+          byteNotWritten: active = False;
+          byteWritten: valTodo[i] <= False;
+          lastByteWritten: begin
+            valTodo[i] <= False;
+            if (i != (valueOf (nBytes) - 1)) begin
+              $display("finished putting to a fifo but expecting more bytes");
+              $finish(-1);
+            end
+          end
+        endcase
+      end
+    end
+  endrule
+
+  Bool valCanPut = isValid (handle) && all (isFalse, readVReg (valTodo));
+
+  method canPut = valCanPut;
+  method put (x) if (valCanPut) = action
+    writeVReg (val, unpack (zeroExtend (pack (x))));
+    writeVReg (valTodo, replicate (True));
+    resetCountFF (handle.Valid);
+  endaction;
+
+endmodule
+
+////////////////////////////////////////////////////////////////////////////////
+module mkUnixFifoSource #(String pathname) (Source #(t))
+  // constraints
+  provisos ( Bits #(t, t_bits_sz)
+           , Add #(1, _dummy0, t_bits_sz) // t_bits_sz > 0
+           , NumAlias #(t_bytes_sz, TDiv #(t_bits_sz, 8))
+           , Add #(_a, t_bits_sz, TMul #(t_bytes_sz, 8))
+           );
+
+  // prepare unix fifo descriptor
+  Reg #(Maybe #(BlueUnixFifoHandle)) blueUnixFifoHandle <- mkReg (Invalid);
+  rule create (!isValid (blueUnixFifoHandle));
+    let handle <- createFF (pathname, fromInteger (valueOf (t_bytes_sz)));
+    blueUnixFifoHandle <= Valid (handle);
+    $display ( "using unix fifo \"", pathname
+             , "\", %0d-bit payload (%0d byte(s)), opened as a source"
+             , valueOf (t_bits_sz), valueOf (t_bytes_sz) );
+  endrule
+
+  // wrap the unix fifo consumer and export as source
+  Source #(t) src <- mkFFConsumer (blueUnixFifoHandle);
+  return src;
+
+endmodule
+
+////////////////////////////////////////////////////////////////////////////////
+module mkUnixFifoSink #(String pathname) (Sink #(t))
+  // constraints
+  provisos ( Bits #(t, t_bits_sz)
+           , Add #(1, _dummy0, t_bits_sz) // t_bits_sz > 0
+           , NumAlias #(t_bytes_sz, TDiv #(t_bits_sz, 8))
+           , Add #(_a, t_bits_sz, TMul #(t_bytes_sz, 8))
+           );
+
+  // prepare unix fifo descriptor
+  Reg #(Maybe #(BlueUnixFifoHandle)) blueUnixFifoHandle <- mkReg (Invalid);
+  rule create (!isValid (blueUnixFifoHandle));
+    let handle <- createFF (pathname, fromInteger (valueOf (t_bytes_sz)));
+    blueUnixFifoHandle <= Valid (handle);
+    $display ( "using unix fifo ", pathname
+             , ", %0d-bit payload (%0d byte(s)), opened as a sink"
+             , valueOf (t_bits_sz), valueOf (t_bytes_sz) );
+  endrule
+
+  // wrap the unix fifo producer and export as sink
+  Sink #(t) snk <- mkFFProducer (blueUnixFifoHandle);
+  return snk;
+
+endmodule
+
+/*
+
 import "BDPI" bub_fifo_BDPI_Create =
   function ActionValue #(BlueUnixFifoHandle) createFF ( String pathname
                                                       , Bit #(32) byte_size );
@@ -149,5 +317,7 @@ module mkUnixFifoSink #(String pathname) (Sink #(t))
   return toGuardedSink (ff);
 
 endmodule
+
+*/
 
 endpackage
