@@ -136,7 +136,7 @@ extern unsigned char bub_fifo_BDPI_Write
 // DPI-C Verilog API
 ////////////////////////////////////////////////////////////////////////////////
 
-typedef enum: uint8_t {
+typedef enum __attribute__((__packed__)) {
      LastByteRead = 0x00
 ,   ValidByteRead = 0x01
 , InvalidByteRead = 0x02
@@ -147,7 +147,7 @@ typedef struct {
   uint8_t byte;
 } byte_read_t;
 
-typedef enum: uint8_t {
+typedef enum __attribute__((__packed__)) {
   LastByteWritten = 0x00
 ,     ByteWritten = 0x01
 ,  ByteNotWritten = 0x02
