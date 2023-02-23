@@ -118,7 +118,7 @@ module mkFFProducer #(Maybe #(BlueUnixFifoHandle) handle) (Sink #(t))
            );
 
   Vector #(nBytes, Reg #(Bit #(8))) val <- replicateM (mkRegU);
-  Vector #(nBytes, Reg #(Bool)) valTodo <- replicateM (mkReg (True));
+  Vector #(nBytes, Reg #(Bool)) valTodo <- replicateM (mkReg (False));
 
   function isFalse (x) = !x;
 
