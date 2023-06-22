@@ -2,8 +2,8 @@ BSC = bsc
 CC ?= gcc
 
 BLUEUNIXBRIDGESDIR ?= ../..
-BLUEBASICSDIR = $(BLUEUNIXBRIDGESDIR)/BlueBasics
-BSVPATH = +:$(BLUEUNIXBRIDGESDIR):$(BLUEBASICSDIR)
+include $(BLUEUNIXBRIDGESDIR)/blueunixbridges.inc.mk
+BSVPATH = +:$(BLUEUNIXBRIDGES_DIRS)
 
 # generated files directories
 BUILDDIR = $(CURDIR)/build
