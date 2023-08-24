@@ -53,7 +53,7 @@ bool bub_fifo_Produce (fifo_desc_t* desc, void* elemsrc);
 void bub_fifo_Close (fifo_desc_t* desc);
 ```
 
-== TODO
+== Future work
 === Socket bridges
 === more documentation
 === catch simulator termination and destroy unix fifos
