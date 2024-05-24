@@ -1,0 +1,11 @@
+# Build folders
+build
+verilatordir
+fifos
+
+# Executables and shared object files
+bluesim
+getReq
+putRsp
+*.so
+*.o
