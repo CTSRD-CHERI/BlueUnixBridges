@@ -54,9 +54,12 @@ void bub_fifo_Close (fifo_desc_t* desc);
 ```
 
 == Future work
+
 === Socket bridges
 Currently, the available BlueUnixBridges are backed by Unix FIFOs. An additional future implementation of the same BSV API could be backed by Unix sockets. This would enable communication with other Unix processes (either conventional software or other BSV simulators) over the network.
+
 === Termination helper primitive
 It is currently left up to the user how to clean up Unix FIFOs after process termination. We would like to provide some helper functions that can be called by the user to streamline termination clean up.
+
 === More documentation
 With a richer set of functionality, we would like to provide a high level presentation and some code examples to make this library easier to use.
